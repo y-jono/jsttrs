@@ -1,35 +1,56 @@
 var app = {}
 
-app.TOP = 0
-app.RIGHT = 1
+app.TOP    = 0
+app.RIGHT  = 1
 app.BOTTOM = 2
-app.LEFT = 3
-
+app.LEFT   = 3
 app.GRID_SIZE     = 20 // px
-app.GRID_WIDTH    = 5  // num
+app.GRID_WIDTH    = 5 // num
 app.GRID_HEIGHT   = 15 // num
 app.GRID_CELLS    = app.GRID_WIDTH * app.GRID_HEIGHT
 app.CANVAS_WIDTH  = 720 // px  
 app.CANVAS_HEIGHT = 402 // px  
-app.grid         = new Array(app.GRID_HEIGHT * app.GRID_WIDTH)
-_.fill(app.grid, false)
-app.block        = _.map([3], function(n){return n+app.GRID_CELLS})
-app.lastKeyPressed = 0
-app.blockDownFrame =30 
-app.blockDownCount = 0  
-
+app.BLOCK_DOWN_FRAME_INTERVAL = 30 
 app.OFFSET_TOP    = app.GRID_WIDTH
 app.OFFSET_RIGHT  = 1
 app.OFFSET_BOTTOM = -(app.GRID_WIDTH)
 app.OFFSET_LEFT   = -(1)
+app.INIT_POS      = Math.floor(app.GRID_WIDTH / 2)
+app.FRAME_RATE    = 60
+
+app.grid         = new Array(app.GRID_HEIGHT * app.GRID_WIDTH)
+_.fill(app.grid, false)
+app.block        = _.map([app.INIT_POS], function(n){return n+app.GRID_CELLS})
+app.rotateKeyPressed = 0
+app.lastKeyPressed = 0
+
+var idx2Y = function(idx) {
+  return Math.floor(idx / app.GRID_WIDTH)
+}
+
+var idx2X = function(idx) {
+  return idx % app.GRID_WIDTH
+}
+
+var getIdx = function(coord) {
+  return coord[0] + (coord[1] * app.GRID_WIDTH)
+}
+
+var idx2Coord = function(idx) {
+  return [idx2X(idx), idx2Y(idx)]
+}
+
+var coord2Idx = function(coord) {
+  return coord[0] + (coord[1] * app.GRID_WIDTH)
+}
 
 var hasReachedWall = function(edge) {
   var posEdge
-  var offset
-  var POS_TOP = app.GRID_HEIGHT - 1
-  var POS_RIGHT = app.GRID_WIDTH - 1
-  var POS_BOTTOM = 0
-  var POS_LEFT = 0
+  ,offset
+  ,POS_TOP    = app.GRID_HEIGHT - 1
+  ,POS_RIGHT  = app.GRID_WIDTH - 1
+  ,POS_BOTTOM = 0
+  ,POS_LEFT   = 0
 
   switch(edge) {
     case app.TOP:
@@ -56,13 +77,13 @@ var hasReachedWall = function(edge) {
   var fn
   if ( edge === app.LEFT || edge === app.RIGHT ) {
     fn = function(n){
-      var w = n % app.GRID_WIDTH
-      return w === posEdge || app.grid[n + offset]
+      x = idx2X(n)
+      return x === posEdge || app.grid[n + offset]
     }
   } else if ( edge === app.TOP || edge === app.BOTTOM ) {
     fn = function(n){
-      var h = Math.floor(n / app.GRID_WIDTH)
-      return h === posEdge || app.grid[n + offset]
+      y = idx2Y(n)
+      return y === posEdge || app.grid[n + offset]
     }
   } else {
     console.log("hasReachedWall() invalid argument")
@@ -73,6 +94,10 @@ var hasReachedWall = function(edge) {
 
 var moveBlockTo = function(block, direction) {
   var offset
+    ,len
+    ,tmp
+    ,i
+
   switch(direction) {
     case app.TOP:
       offset = app.OFFSET_TOP
@@ -91,16 +116,17 @@ var moveBlockTo = function(block, direction) {
       break
   }
 
-  var len = block.length
-  for(var i = 0; i < len; i++) {
+  len = block.length
+  for(i = 0; i < len; i++) {
     // get position
-    var tmp = block[i]
+    tmp = block[i]
     block[i] = tmp + offset
   }
 }
 
 // TODO: controll key custumize setting 1
 var mapKeyCodeToEdge = function (sketch, keyCode) {
+  var edge
   switch(keyCode) {
     case sketch.UP_ARROW:
       edge = app.TOP 
@@ -115,15 +141,26 @@ var mapKeyCodeToEdge = function (sketch, keyCode) {
       edge = app.LEFT
       break
     default:
-      console.log("moveBlockIfKeyPressed() invalid argument")
+      console.log("mapKeyCodeToEdge() invalid argument")
       break
   }
   return edge;
 }
 
-var moveBlockIfKeyPressed = function (sketch, keyCode) {
+app.rotateBlockIfKeyPressed = function (sketch, keyCode) {
+  if ( app.rotateKeyPressed <= 0 ) {
+    return;
+  }
+  var theta = app.rotateKeyPressed % 3
+
+  
+  app.rotateKeyPressed = 0
+}
+
+app.moveBlockIfKeyPressed = function (sketch, keyCode) {
+  var e
   if ( app.lastKeyPressed === keyCode) {
-    var e = mapKeyCodeToEdge(sketch, keyCode)
+    e = mapKeyCodeToEdge(sketch, keyCode)
     if ( !_.some(app.block, hasReachedWall(e)) ) {
       moveBlockTo(app.block, e)
     }
@@ -132,9 +169,57 @@ var moveBlockIfKeyPressed = function (sketch, keyCode) {
   }
 }
 
+app.controllBlockWhenBlockDown = function(){
+  if ( _.some(app.block, hasReachedWall(app.BOTTOM)) ) {
+    var ys
+      ,isCompRows
+      ,pos
+    // copy the block controlled to grid
+    app.block.forEach(function(n) { app.grid[n] = true })
+
+    // list up block's Y coord
+    ys = _.chain(app.block)
+      .map(function(n){ return idx2Y(n) })
+      .unique()
+      .value()
+
+    // check the row filled
+    isCompRows = 
+      _.map(ys, function(y) {
+        var idx = coord2Idx([0,y])
+        return _.chain(app.grid)
+          .slice(idx, idx+app.GRID_WIDTH)
+          .every()
+          .value()
+      })
+
+    // down the cells above the row filled
+    _.chain(ys)
+      .zip(isCompRows)
+      .sortBy(function(e){ return -e[0] })
+      .filter(function(e){ return e[1] })
+      .forEach(function(e){
+        var idx = coord2Idx([0,e[0]])
+        for ( i = idx; i < app.GRID_CELLS - app.GRID_WIDTH; i++) {
+          app.grid[i] = app.grid[i+app.GRID_WIDTH] 
+        }
+      })
+      .value()
+
+    // next block will appear
+    // TODO: prepare a lot of tetrimino
+    pos = Math.floor(app.GRID_WIDTH / 2)
+    app.block = _.map([pos,pos+app.GRID_WIDTH], function(n){return n+app.GRID_CELLS})
+  }
+  // down the block controlled
+  else {
+    moveBlockTo(app.block, app.BOTTOM)
+  }
+}
+
 app.sketchHandle = function(sketch) {
   sketch.setup = function() {
-    sketch.frameRate(30)
+    sketch.frameRate(app.FRAME_RATE)
     sketch.createCanvas(app.CANVAS_WIDTH, app.CANVAS_HEIGHT)
   }
 
@@ -155,56 +240,37 @@ app.sketchHandle = function(sketch) {
   }
 
   sketch.draw = function() {
-
     // erase canvas
     sketch.clear()
 
     // TODO: controll key custumize setting 3
-    //moveBlockIfKeyPressed(sketch, sketch.UP_ARROW) // for debug
-    moveBlockIfKeyPressed(sketch, sketch.LEFT_ARROW)
-    moveBlockIfKeyPressed(sketch, sketch.RIGHT_ARROW)
-    moveBlockIfKeyPressed(sketch, sketch.DOWN_ARROW)
+    app.rotateBlockIfKeyPressed(sketch, sketch.UP_ARROW)
+    //app.moveBlockIfKeyPressed(sketch, sketch.UP_ARROW) // for debug
+    app.moveBlockIfKeyPressed(sketch, sketch.LEFT_ARROW)
+    app.moveBlockIfKeyPressed(sketch, sketch.RIGHT_ARROW)
+    app.moveBlockIfKeyPressed(sketch, sketch.DOWN_ARROW)
 
-    if ( app.blockDownCount == 0 ) {
-      if ( _.some(app.block, hasReachedWall(app.BOTTOM)) ) {
-        app.block.forEach(function(n) {
-          app.grid[n] = true
-        })
-        // next block will appear
-        app.block = _.map([3], function(n){return n+app.GRID_CELLS})
-      }
-      // move block down
-      else {
-        moveBlockTo(app.block, app.BOTTOM)
-      }
+    if ( (sketch.frameCount % app.BLOCK_DOWN_FRAME_INTERVAL) === 0 ) {
+      app.controllBlockWhenBlockDown()
     }
 
-    app.block.forEach(function(e,idx,arr){
-        // get position
-        var w = e % app.GRID_WIDTH
-        var h = Math.floor(e / app.GRID_WIDTH)
-
-        // draw block controlled 
+    // draw block controlled 
+    _.chain(app.block)
+      .map(idx2Coord)
+      .forEach(function(c,idx,arr){
         sketch.stroke(0)
-        sketch.rect(w * app.GRID_SIZE, (app.GRID_HEIGHT-h) * app.GRID_SIZE, app.GRID_SIZE, app.GRID_SIZE)
-    },this)
+        sketch.rect(c[0] * app.GRID_SIZE, (app.GRID_HEIGHT-c[1]) * app.GRID_SIZE, app.GRID_SIZE, app.GRID_SIZE)
+      },this)
+      .value()
 
+    // draw rest blocks
     app.grid.forEach(function(e,idx,arr){
       if (e) {
-        // get position
-        var w = idx % app.GRID_WIDTH
-        var h = Math.floor(idx / app.GRID_WIDTH)
-
-        // draw rest blocks
+        var c = idx2Coord(idx)
         sketch.stroke(0)
-        sketch.rect(w * app.GRID_SIZE, (app.GRID_HEIGHT-h) * app.GRID_SIZE, app.GRID_SIZE, app.GRID_SIZE)
+        sketch.rect(c[0] * app.GRID_SIZE, (app.GRID_HEIGHT-c[1]) * app.GRID_SIZE, app.GRID_SIZE, app.GRID_SIZE)
       }
     },this)
-
-    app.blockDownCount += 1
-    if ( app.blockDownCount == app.blockDownFrame ) {
-      app.blockDownCount = 0
-    }
   }
 }
 
